@@ -1,85 +1,124 @@
-const PROXY_URL = 'https://86fcc51b.odeyalko.pages.dev';
-
-document.getElementById('analyzeBtn').addEventListener('click', async () => {
-  const inputElem = document.getElementById('productUrl');
-  const resultDiv = document.getElementById('result');
-  const spinner = document.getElementById('loading');
-
-  resultDiv.innerHTML = '';
-  const userInput = inputElem.value.trim();
-
-  if (!userInput) {
-    showError('Введите ссылку или SKU.');
-    return;
-  }
-
-  try {
-    spinner.classList.remove('hidden');
-    
-    const { url, sku } = processInput(userInput);
-    const skuSupplier = await fetchData(url);
-    
-    showResult(skuSupplier, url);
-  } catch (error) {
-    showError(error.message);
-  } finally {
-    spinner.classList.add('hidden');
-  }
-
-  function processInput(input) {
-    if (!input.startsWith('http')) {
-      return { 
-        url: `https://www.lamoda.ru/p/${input}/`,
-        sku: input 
-      };
+const PROXIES = [
+  {
+    url: 'https://cors-anywhere.herokuapp.com/',
+    method: 'prefix',
+    headers: {
+      'X-Requested-With': 'XMLHttpRequest'
     }
-    
-    const match = input.match(/\/p\/([\w-]+)/);
-    if (!match) throw new Error('Неверный формат ссылки');
-    
-    return { 
-      url: input,
-      sku: match[1] 
-    };
+  },
+  {
+    url: 'https://api.codetabs.com/v1/proxy/?quest=',
+    method: 'prefix',
+    headers: {}
+  },
+  {
+    url: 'https://thingproxy.freeboard.io/fetch/',
+    method: 'prefix',
+    headers: {}
+  },
+  {
+    url: 'https://yacdn.org/proxy/',
+    method: 'prefix',
+    headers: {}
   }
+];
 
-  async function fetchData(url) {
-    const response = await fetch(`${PROXY_URL}/?url=${encodeURIComponent(url)}`);
-    
-    if (!response.ok) {
-      throw new Error(`Ошибка сервера: ${response.status}`);
+async function fetchProductData(url) {
+  let lastError = null;
+  
+  for (const proxy of PROXIES) {
+    try {
+      const proxyUrl = proxy.method === 'prefix' 
+        ? proxy.url + encodeURIComponent(url)
+        : `${proxy.url}?url=${encodeURIComponent(url)}`;
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+
+      const response = await fetch(proxyUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+          ...proxy.headers
+        },
+        signal: controller.signal
+      });
+
+      clearTimeout(timeout);
+
+      if (!response.ok) {
+        lastError = `HTTP Error ${response.status}`;
+        continue;
+      }
+
+      const html = await response.text();
+      const sku = extractSKU(html);
+      
+      if (!sku) {
+        lastError = 'SKU not found in response';
+        continue;
+      }
+
+      return sku;
+
+    } catch (error) {
+      lastError = error.message;
+      continue;
     }
-    
-    const html = await response.text();
-    return extractSKU(html);
   }
 
-  function extractSKU(html) {
-    const regex = /"sku_supplier":\s*"([^"]+)"/;
+  throw new Error(`All proxies failed: ${lastError}`);
+}
+
+function extractSKU(html) {
+  // Улучшенный поиск с учётом разных вариантов вёрстки
+  const patterns = [
+    /"sku_supplier":\s*"([^"]+)"/,
+    /<meta[^>]+sku_supplier[^>]+content="([^"]+)"/i,
+    /data-sku-supplier="([^"]+)"/i
+  ];
+
+  for (const regex of patterns) {
     const match = html.match(regex);
-    return match?.[1] || 'Артикул не найден';
+    if (match && match[1]) return match[1];
   }
 
-  function showResult(sku, url) {
+  return null;
+}
+
+// Пример использования
+document.getElementById('analyzeBtn').addEventListener('click', async () => {
+  const input = document.getElementById('productUrl').value.trim();
+  const resultDiv = document.getElementById('result');
+  
+  try {
+    if (!input) throw new Error('Введите URL или SKU');
+    
+    const url = input.startsWith('http') 
+      ? input
+      : `https://www.lamoda.ru/p/${input}/`;
+
+    const sku = await fetchProductData(url);
+    
     resultDiv.innerHTML = `
-      <div class="result">
-        <h3>Результат:</h3>
-        <div class="sku">${sku}</div>
-        <a href="${url}" target="_blank" class="link">Открыть товар</a>
+      <div class="success">
+        Артикул поставщика: <strong>${sku}</strong>
+        <div class="actions">
+          <a href="${url}" target="_blank">Открыть товар</a>
+          <button onclick="copyToClipboard('${sku}')">Копировать</button>
+        </div>
       </div>
     `;
-  }
-
-  function showError(message) {
+    
+  } catch (error) {
     resultDiv.innerHTML = `
       <div class="error">
-        <h3>Ошибка!</h3>
-        <p>${message}</p>
-        <div class="examples">
-          Примеры корректных данных:
+        Ошибка: ${error.message}
+        <div class="tips">
+          Попробуйте:
           <ul>
-            <li>https://www.lamoda.ru/p/MP002XW0OIJF/</li>
-            <li>MP002XW0OIJF</li>
+            <li>Проверить интернет-соединение</li>
+            <li>Обновить страницу</li>
+            <li>Использовать другой формат ввода</li>
           </ul>
         </div>
       </div>

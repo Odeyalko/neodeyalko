@@ -1,22 +1,4 @@
-const PROXIES = [
-  {
-    url: "https://api.allorigins.win/get?url=",
-    encode: true,
-    headers: {}
-  },
-  {
-    url: "https://corsproxy.io/?",
-    encode: true,
-    headers: {}
-  },
-  {
-    url: "https://proxy.cors.sh/",
-    encode: false,
-    headers: {
-      'x-cors-api-key': 'temp_09a95c02e6b34600d3c60b4d3a4a6147'
-    }
-  }
-];
+const PROXY_URL = 'https://your-worker-name.your-cloudflare-account.workers.dev';
 
 document.getElementById('analyzeBtn').addEventListener('click', async () => {
   const inputElem = document.getElementById('productUrl');
@@ -27,114 +9,80 @@ document.getElementById('analyzeBtn').addEventListener('click', async () => {
   const userInput = inputElem.value.trim();
 
   if (!userInput) {
-    resultDiv.innerHTML = '<p class="error">Введите ссылку или SKU.</p>';
+    showError('Введите ссылку или SKU.');
     return;
   }
 
-  let productUrl, originalSku;
-  
   try {
-    if (!userInput.startsWith('http')) {
-      originalSku = userInput;
-      productUrl = `https://www.lamoda.ru/p/${userInput}/`;
-    } else {
-      const match = userInput.match(/\/p\/([a-zA-Z0-9]+)/);
-      if (!match?.[1]) throw new Error('Неверный формат ссылки');
-      originalSku = match[1];
-      productUrl = userInput;
-    }
-
     spinner.classList.remove('hidden');
-    const html = await fetchHTML(productUrl);
-    const skuSupplier = extractSKU(html);
+    
+    const { url, sku } = processInput(userInput);
+    const skuSupplier = await fetchData(url);
+    
+    showResult(skuSupplier, url);
+  } catch (error) {
+    showError(error.message);
+  } finally {
+    spinner.classList.add('hidden');
+  }
 
+  function processInput(input) {
+    if (!input.startsWith('http')) {
+      return { 
+        url: `https://www.lamoda.ru/p/${input}/`,
+        sku: input 
+      };
+    }
+    
+    const match = input.match(/\/p\/([\w-]+)/);
+    if (!match) throw new Error('Неверный формат ссылки');
+    
+    return { 
+      url: input,
+      sku: match[1] 
+    };
+  }
+
+  async function fetchData(url) {
+    const response = await fetch(`${PROXY_URL}/?url=${encodeURIComponent(url)}`);
+    
+    if (!response.ok) {
+      throw new Error(`Ошибка сервера: ${response.status}`);
+    }
+    
+    const html = await response.text();
+    return extractSKU(html);
+  }
+
+  function extractSKU(html) {
+    const regex = /"sku_supplier":\s*"([^"]+)"/;
+    const match = html.match(regex);
+    return match?.[1] || 'Артикул не найден';
+  }
+
+  function showResult(sku, url) {
     resultDiv.innerHTML = `
-      <div class="result-box">
-        <div class="success">Найденный артикул:</div>
-        <div class="sku-value">${skuSupplier}</div>
-        <a href="${productUrl}" target="_blank" class="link">Открыть товар</a>
+      <div class="result">
+        <h3>Результат:</h3>
+        <div class="sku">${sku}</div>
+        <a href="${url}" target="_blank" class="link">Открыть товар</a>
       </div>
     `;
+  }
 
-  } catch (error) {
+  function showError(message) {
     resultDiv.innerHTML = `
-      <div class="error-box">
-        <div class="error">Ошибка: ${error.message}</div>
-        <div class="guide">
-          <h3>Рекомендации:</h3>
+      <div class="error">
+        <h3>Ошибка!</h3>
+        <p>${message}</p>
+        <div class="examples">
+          Примеры корректных данных:
           <ul>
-            <li>Проверьте правильность ссылки/SKU</li>
-            <li>Обновите страницу и попробуйте снова</li>
-            <li>Используйте VPN при необходимости</li>
+            <li>https://www.lamoda.ru/p/MP002XW0OIJF/</li>
+            <li>MP002XW0OIJF</li>
           </ul>
         </div>
       </div>
     `;
-  } finally {
-    spinner.classList.add('hidden');
   }
 });
-
-async function fetchHTML(targetUrl) {
-  let lastError;
-  
-  for (const {url: proxy, encode, headers} of PROXIES) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
-
-    try {
-      const processedUrl = encode ? 
-        proxy + encodeURIComponent(targetUrl) :
-        proxy + targetUrl;
-
-      const response = await fetch(processedUrl, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-          ...headers
-        },
-        signal: controller.signal
-      });
-
-      clearTimeout(timeout);
-
-      if (!response.ok) {
-        lastError = new Error(`HTTP Error ${response.status}`);
-        continue;
-      }
-
-      const content = proxy.includes('allorigins') ? 
-        (await response.json()).contents : 
-        await response.text();
-
-      if (content.includes('sku_supplier')) return content;
-      throw new Error('Invalid content');
-
-    } catch (error) {
-      lastError = error;
-    } finally {
-      clearTimeout(timeout);
-    }
-  }
-  
-  throw new Error(lastError?.message || 'Не удалось подключиться к серверам');
-}
-
-function extractSKU(html) {
-  // Улучшенный поиск JSON данных
-  const jsonData = html.match(/<script[^>]*id="nuxt-data"[^>]*>(.+?)<\/script>/s);
-  if (jsonData) {
-    try {
-      const parsed = JSON.parse(jsonData[1]);
-      return parsed?.payload?.product?.sku_supplier || 
-             parsed?.payload?.payload?.product?.sku_supplier;
-    } catch (e) {
-      console.warn('JSON Parse Error:', e);
-    }
-  }
-
-  // Резервный поиск
-  const skuMatch = html.match(/"sku_supplier":\s*"([\w]+)"/);
-  if (skuMatch) return skuMatch[1];
-
-  throw new Error('Артикул не найден');
-}

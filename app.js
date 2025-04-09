@@ -1,7 +1,21 @@
 const PROXIES = [
-  "https://api.allorigins.win/get?url=",
-  "https://proxy.cors.sh/",
-  "https://cors-anywhere.herokuapp.com/"
+  {
+    url: "https://api.allorigins.win/get?url=",
+    encode: true,
+    headers: {}
+  },
+  {
+    url: "https://corsproxy.io/?",
+    encode: true,
+    headers: {}
+  },
+  {
+    url: "https://proxy.cors.sh/",
+    encode: false,
+    headers: {
+      'x-cors-api-key': 'temp_09a95c02e6b34600d3c60b4d3a4a6147'
+    }
+  }
 ];
 
 document.getElementById('analyzeBtn').addEventListener('click', async () => {
@@ -47,12 +61,11 @@ document.getElementById('analyzeBtn').addEventListener('click', async () => {
       <div class="error-box">
         <div class="error">Ошибка: ${error.message}</div>
         <div class="guide">
-          <h3>Как исправить:</h3>
+          <h3>Рекомендации:</h3>
           <ul>
-            <li>Используйте полную ссылку вида:<br>
-            https://www.lamoda.ru/p/mp002xw05ezl/...</li>
-            <li>Или введите только SKU: mp002xw05ezl</li>
-            <li>Попробуйте другой прокси (VPN)</li>
+            <li>Проверьте правильность ссылки/SKU</li>
+            <li>Обновите страницу и попробуйте снова</li>
+            <li>Используйте VPN при необходимости</li>
           </ul>
         </div>
       </div>
@@ -62,26 +75,22 @@ document.getElementById('analyzeBtn').addEventListener('click', async () => {
   }
 });
 
-async function fetchHTML(url) {
+async function fetchHTML(targetUrl) {
   let lastError;
   
-  for (const proxy of PROXIES) {
+  for (const {url: proxy, encode, headers} of PROXIES) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
+    const timeout = setTimeout(() => controller.abort(), 8000);
 
     try {
-      let proxyUrl;
-      if (proxy === 'https://proxy.cors.sh/') {
-        proxyUrl = proxy + url;
-      } else {
-        proxyUrl = proxy + encodeURIComponent(url);
-      }
+      const processedUrl = encode ? 
+        proxy + encodeURIComponent(targetUrl) :
+        proxy + targetUrl;
 
-      const response = await fetch(proxyUrl, {
+      const response = await fetch(processedUrl, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-          'X-Cors-API-Key': 'temp_09a95c02e6b34600d3c60b4d3a4a6147',
-          ...(proxy.includes('allorigins') && {'Accept': 'application/json'})
+          ...headers
         },
         signal: controller.signal
       });
@@ -89,16 +98,16 @@ async function fetchHTML(url) {
       clearTimeout(timeout);
 
       if (!response.ok) {
-        lastError = new Error(`Ошибка прокси: ${response.status}`);
+        lastError = new Error(`HTTP Error ${response.status}`);
         continue;
       }
 
-      const data = proxy.includes('allorigins') 
-        ? (await response.json()).contents
-        : await response.text();
+      const content = proxy.includes('allorigins') ? 
+        (await response.json()).contents : 
+        await response.text();
 
-      if (data.includes('sku_supplier')) return data;
-      throw new Error('Невалидный ответ');
+      if (content.includes('sku_supplier')) return content;
+      throw new Error('Invalid content');
 
     } catch (error) {
       lastError = error;
@@ -107,23 +116,25 @@ async function fetchHTML(url) {
     }
   }
   
-  throw new Error(lastError?.message || 'Все прокси недоступны');
+  throw new Error(lastError?.message || 'Не удалось подключиться к серверам');
 }
 
 function extractSKU(html) {
-  const jsonMatch = html.match(/<script type="application\/json" id="nuxt-data">(.+?)<\/script>/s);
-  if (jsonMatch) {
+  // Улучшенный поиск JSON данных
+  const jsonData = html.match(/<script[^>]*id="nuxt-data"[^>]*>(.+?)<\/script>/s);
+  if (jsonData) {
     try {
-      const data = JSON.parse(jsonMatch[1]);
-      return data.payload.product.sku_supplier || 
-             data.payload.payload.product.sku_supplier;
+      const parsed = JSON.parse(jsonData[1]);
+      return parsed?.payload?.product?.sku_supplier || 
+             parsed?.payload?.payload?.product?.sku_supplier;
     } catch (e) {
-      console.error('JSON parse error:', e);
+      console.warn('JSON Parse Error:', e);
     }
   }
 
-  const directMatch = html.match(/"sku_supplier":\s*"(\w+)"/);
-  if (directMatch) return directMatch[1];
+  // Резервный поиск
+  const skuMatch = html.match(/"sku_supplier":\s*"([\w]+)"/);
+  if (skuMatch) return skuMatch[1];
 
-  throw new Error('Артикул не найден в HTML');
+  throw new Error('Артикул не найден');
 }

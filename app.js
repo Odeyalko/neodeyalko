@@ -1,4 +1,4 @@
-const PROXY_URL = 'https://odeyalko.pages.dev';
+const PROXY_URL = 'https://86fcc51b.odeyalko.pages.dev';
 
 document.getElementById('analyzeBtn').addEventListener('click', async () => {
   const inputElem = document.getElementById('productUrl');

@@ -1,4 +1,4 @@
-const PROXY_URL = 'https://your-worker-name.your-cloudflare-account.workers.dev';
+const PROXY_URL = 'https://odeyalko.pages.dev';
 
 document.getElementById('analyzeBtn').addEventListener('click', async () => {
   const inputElem = document.getElementById('productUrl');

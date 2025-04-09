@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SKU Finder</title>
+  <link rel="icon" type="image/x-icon" href="favicon.ico">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>SKU Finder</h1>
+    <div class="author">by Odeyalko</div>
+  </header>
+  
+  <div class="input-group">
+    <input type="text" id="productUrl" placeholder="Введите ссылку или SKU (например, mp002xw05ezl)">
+    <button id="analyzeBtn">Найти Арт. Партнёра</button>
+  </div>
+  
+  <div id="loading" class="spinner hidden"></div>
+  
+  <div id="result" class="result-card">
+    <div class="result-content"></div>
+  </div>
+  
+  <footer>
+    <div class="tips">
+      <a href="https://pay.cloudtips.ru/p/d2ad7f9c" target="_blank">Оставить чаевые</a>
+    </div>
+  </footer>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

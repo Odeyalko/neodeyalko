@@ -1,127 +1,133 @@
+// app.js
 const PROXIES = [
-  {
-    url: 'https://cors-anywhere.herokuapp.com/',
-    method: 'prefix',
-    headers: {
-      'X-Requested-With': 'XMLHttpRequest'
-    }
-  },
-  {
-    url: 'https://api.codetabs.com/v1/proxy/?quest=',
-    method: 'prefix',
-    headers: {}
-  },
-  {
-    url: 'https://thingproxy.freeboard.io/fetch/',
-    method: 'prefix',
-    headers: {}
-  },
-  {
-    url: 'https://yacdn.org/proxy/',
-    method: 'prefix',
-    headers: {}
-  }
+  'https://api.codetabs.com/v1/proxy/?quest=',
+  'https://corsproxy.io/?',
+  'https://proxy.webserverapi.com/',
+  'https://www.cors-api.org/api/api?url='
 ];
 
-async function fetchProductData(url) {
-  let lastError = null;
-  
-  for (const proxy of PROXIES) {
-    try {
-      const proxyUrl = proxy.method === 'prefix' 
-        ? proxy.url + encodeURIComponent(url)
-        : `${proxy.url}?url=${encodeURIComponent(url)}`;
-
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 5000);
-
-      const response = await fetch(proxyUrl, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-          ...proxy.headers
-        },
-        signal: controller.signal
-      });
-
-      clearTimeout(timeout);
-
-      if (!response.ok) {
-        lastError = `HTTP Error ${response.status}`;
-        continue;
-      }
-
-      const html = await response.text();
-      const sku = extractSKU(html);
-      
-      if (!sku) {
-        lastError = 'SKU not found in response';
-        continue;
-      }
-
-      return sku;
-
-    } catch (error) {
-      lastError = error.message;
-      continue;
-    }
-  }
-
-  throw new Error(`All proxies failed: ${lastError}`);
-}
-
-function extractSKU(html) {
-  // Улучшенный поиск с учётом разных вариантов вёрстки
-  const patterns = [
-    /"sku_supplier":\s*"([^"]+)"/,
-    /<meta[^>]+sku_supplier[^>]+content="([^"]+)"/i,
-    /data-sku-supplier="([^"]+)"/i
-  ];
-
-  for (const regex of patterns) {
-    const match = html.match(regex);
-    if (match && match[1]) return match[1];
-  }
-
-  return null;
-}
-
-// Пример использования
 document.getElementById('analyzeBtn').addEventListener('click', async () => {
   const input = document.getElementById('productUrl').value.trim();
   const resultDiv = document.getElementById('result');
+  const loader = document.getElementById('loader');
   
-  try {
-    if (!input) throw new Error('Введите URL или SKU');
-    
-    const url = input.startsWith('http') 
-      ? input
-      : `https://www.lamoda.ru/p/${input}/`;
+  resultDiv.innerHTML = '';
+  loader.style.display = 'block';
 
-    const sku = await fetchProductData(url);
+  try {
+    if (!input) throw new Error('Введите ссылку или артикул');
     
-    resultDiv.innerHTML = `
-      <div class="success">
-        Артикул поставщика: <strong>${sku}</strong>
-        <div class="actions">
-          <a href="${url}" target="_blank">Открыть товар</a>
-          <button onclick="copyToClipboard('${sku}')">Копировать</button>
-        </div>
-      </div>
-    `;
+    // Автоматическое определение типа ввода
+    const { url, sku } = processInput(input);
+    
+    // Попытка получения данных
+    const html = await fetchWithProxies(url);
+    const supplierSku = extractSupplierSku(html);
+    
+    // Отображение результата
+    resultDiv.innerHTML = createSuccessHTML(supplierSku, url);
     
   } catch (error) {
-    resultDiv.innerHTML = `
-      <div class="error">
-        Ошибка: ${error.message}
-        <div class="tips">
-          Попробуйте:
-          <ul>
-            <li>Проверить интернет-соединение</li>
-            <li>Обновить страницу</li>
-            <li>Использовать другой формат ввода</li>
-          </ul>
-        </div>
-      </div>
-    `;
+    resultDiv.innerHTML = createErrorHTML(error);
+  } finally {
+    loader.style.display = 'none';
   }
 });
+
+// Обработка различных форматов ввода
+function processInput(input) {
+  let url, sku;
+  
+  if (/^https?:\/\//i.test(input)) {
+    const match = input.match(/\/p\/([\w-]+)/i);
+    if (!match) throw new Error('Неверный формат ссылки');
+    sku = match[1];
+    url = input;
+  } else {
+    sku = input;
+    url = `https://www.lamoda.ru/p/${input}/`;
+  }
+  
+  return { url, sku };
+}
+
+// Обход CORS через несколько прокси
+async function fetchWithProxies(url) {
+  let lastError;
+  
+  for (const proxy of PROXIES) {
+    try {
+      const proxyUrl = proxy + encodeURIComponent(url);
+      const response = await fetch(proxyUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+          'Accept': 'text/html,application/xhtml+xml'
+        },
+        timeout: 5000
+      });
+      
+      if (!response.ok) continue;
+      
+      const html = await response.text();
+      if (/sku_supplier/i.test(html)) return html;
+      
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  
+  throw new Error(lastError?.message || 'Все прокси недоступны');
+}
+
+// Парсинг SKU
+function extractSupplierSku(html) {
+  const patterns = [
+    /"sku_supplier":\s*"([^"]+)"/,
+    /data-product-sku="([^"]+)"/,
+    /<meta[^>]+product_id[^>]+content="([^"]+)"/i
+  ];
+  
+  for (const regex of patterns) {
+    const match = html.match(regex);
+    if (match) return match[1];
+  }
+  
+  throw new Error('Артикул не найден');
+}
+
+// Генератор HTML
+function createSuccessHTML(sku, url) {
+  return `
+    <div class="success">
+      <h3>✅ Найден артикул поставщика:</h3>
+      <div class="sku">${sku}</div>
+      <div class="actions">
+        <a href="${url}" target="_blank" class="btn">Открыть товар</a>
+        <button onclick="copyToClipboard('${sku}')" class="btn">Копировать</button>
+      </div>
+    </div>
+  `;
+}
+
+function createErrorHTML(error) {
+  return `
+    <div class="error">
+      <h3>⛔ Ошибка!</h3>
+      <p>${error.message}</p>
+      <div class="help">
+        <p>Примеры правильного формата:</p>
+        <ul>
+          <li>Полная ссылка:<br>
+          <code>https://www.lamoda.ru/p/MP002XW0OIJF/...</code></li>
+          <li>Только артикул:<br>
+          <code>MP002XW0OIJF</code></li>
+        </ul>
+      </div>
+    </div>
+  `;
+}
+
+// Вспомогательная функция
+function copyToClipboard(text) {
+  navigator.clipboard.writeText(text);
+}
